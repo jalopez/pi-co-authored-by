@@ -1,0 +1,2 @@
+Disposable smoke test for commit attribution in compound shell commands.
+This file is not intended to be merged.
