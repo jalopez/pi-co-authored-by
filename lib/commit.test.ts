@@ -1,5 +1,146 @@
+/// <reference types="node" />
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { isGitCommit, appendTrailers } from "./commit.ts";
+
+const trailerFlags = ` -m "" -m $'Co-Authored-By: Model <noreply@pi.dev>\\nGenerated-By: pi 1.0.0'`;
+
+describe("compound shell commands", () => {
+	it.each([" && ", " || ", "; ", "\n", " | ", " & "])(
+		"keeps trailers on the commit before %j",
+		(separator) => {
+			const commit = 'git commit -m "fix"';
+			const tail = `${separator}git push`;
+			expect(appendTrailers(commit + tail, "Model", "1.0.0")).toBe(
+				commit + trailerFlags + tail,
+			);
+		},
+	);
+
+	it("does not pass trailers to gh pr create", () => {
+		const commit = 'git commit -m "fix"';
+		const tail = ' && gh pr create --title "fix" --body "details"';
+		expect(appendTrailers(commit + tail, "Model", "1.0.0")).toBe(
+			commit + trailerFlags + tail,
+		);
+	});
+
+	it("rewrites each commit in a chain", () => {
+		expect(appendTrailers('git add . && git commit -m "one"; git commit -am "two" && git push', "Model", "1.0.0")).toBe(
+			`git add . && git commit -m "one"${trailerFlags}; git commit -am "two"${trailerFlags} && git push`,
+		);
+	});
+
+	it.each([
+		'git commit -m "fix && push; | stuff"',
+		"git commit -m 'fix || push; stuff'",
+		'git commit -m fix\\;stuff',
+		'git commit -m fix\\ ',
+		'git commit -m "fix\nbody"',
+		'git commit -m "fix \\"quoted\\" && stuff"',
+		"git commit -m $'fix \\'quoted\\' && stuff'",
+	])("preserves quoted and escaped shell operators: %s", (commit) => {
+		expect(appendTrailers(`${commit} && git push`, "Model", "1.0.0")).toBe(
+			`${commit}${trailerFlags} && git push`,
+		);
+	});
+
+	it("inserts trailers before comments", () => {
+		expect(appendTrailers('git commit -m "fix" # comment\ngit push', "Model", "1.0.0")).toBe(
+			`git commit -m "fix"${trailerFlags} # comment\ngit push`,
+		);
+	});
+
+	it.each([
+		'git commit && gh pr create -m milestone',
+		'echo "git commit -m fake"',
+		'# git commit -m fake\ngit push',
+		'git commit --no-edit; echo -m',
+		'git commit -- path-m',
+		'git commit > output-m',
+		'git commit > -m',
+		'git commit -- -m',
+		'git commit --author -m',
+		'git commit -Skeym',
+		'git commit -m',
+	])("does not misidentify unrelated text: %s", (command) => {
+		expect(isGitCommit(command)).toBe(false);
+		expect(appendTrailers(command, "Model", "1.0.0")).toBe(command);
+	});
+
+	it.each([
+		'git commit -m "$(echo fix)" && git push',
+		'git commit -m `echo fix` && git push',
+		'cat <<EOF\ngit commit -m fake\nEOF',
+		'git commit -m "unterminated',
+		'git commit -m "fix" && cat <<EOF\ngit commit -m fake\nEOF',
+		'for item in\ngit commit -m fake; do echo "$item"; done',
+		'[[ false && git commit -m fake ]]',
+		'git commit -m "fix" >',
+	])("leaves unsupported or malformed syntax unchanged: %s", (command) => {
+		expect(appendTrailers(command, "Model", "1.0.0")).toBe(command);
+	});
+});
+
+describe("shell argument handling", () => {
+	it.each([
+		['git commit -m "fix" >output && git push', `git commit -m "fix"${trailerFlags} >output && git push`],
+		['git commit -m "fix" 2>&1 && git push', `git commit -m "fix"${trailerFlags} 2>&1 && git push`],
+		['git commit -m "fix" -- file && git push', `git commit -m "fix"${trailerFlags} -- file && git push`],
+		['git commit >output -m "fix" && git push', `git commit >output -m "fix"${trailerFlags} && git push`],
+		['git commit -m "fix"&&git push', `git commit -m "fix"${trailerFlags}&&git push`],
+		['git commit \\\n-m "fix" && git push', `git commit \\\n-m "fix"${trailerFlags} && git push`],
+		['git commit --message="fix" && git push', `git commit --message="fix"${trailerFlags} && git push`],
+		['git commit --message "fix" && git push', `git commit --message "fix"${trailerFlags} && git push`],
+		['git commit -m "fix\\nbody" && git push', `git commit -m "fix\\nbody"${trailerFlags} && git push`],
+	])("rewrites %s", (command, expected) => {
+		expect(appendTrailers(command, "Model", "1.0.0")).toBe(expected);
+	});
+});
+
+describe("shell execution", () => {
+	it.each(["Model", "Model's \\n $(printf injected)"])("attributes the commit without changing push or PR arguments (%s)", (model) => {
+		const cwd = mkdtempSync(join(tmpdir(), "pi-co-authored-by-"));
+		const options = {
+			cwd,
+			encoding: "utf8" as const,
+			env: {
+				...process.env,
+				GIT_CONFIG_NOSYSTEM: "1",
+				GIT_CONFIG_GLOBAL: "/dev/null",
+				GIT_AUTHOR_NAME: "Test",
+				GIT_AUTHOR_EMAIL: "test@example.com",
+				GIT_COMMITTER_NAME: "Test",
+				GIT_COMMITTER_EMAIL: "test@example.com",
+			},
+		};
+		try {
+			execFileSync("git", ["init", "--quiet"], options);
+			const command = appendTrailers(
+				'git commit --allow-empty -qm "fix" && git push origin main && gh pr create --title "fix" --body "details"',
+				model,
+				"1.0.0",
+			);
+			const output = execFileSync("bash", ["-c", `
+				git() {
+					if [[ "$1" == push ]]; then printf 'git'; printf ' [%s]' "$@"; printf '\\n';
+					else command git "$@"; fi
+				}
+				gh() { printf 'gh'; printf ' [%s]' "$@"; printf '\\n'; }
+				${command}
+			`], options);
+			expect(output).toBe("git [push] [origin] [main]\ngh [pr] [create] [--title] [fix] [--body] [details]\n");
+			expect(execFileSync("git", ["log", "-1", "--format=%B"], options).trimEnd()).toBe(
+				`fix\n\nCo-Authored-By: ${model} <noreply@pi.dev>\nGenerated-By: pi 1.0.0`,
+			);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+});
 
 describe("isGitCommit", () => {
 	it("detects git commit -m", () => {
@@ -71,7 +212,7 @@ describe("appendTrailers", () => {
 		);
 	});
 
-	it("trims trailing whitespace from original command", () => {
+	it("inserts trailers before trailing whitespace", () => {
 		const result = appendTrailers(
 			'git commit -m "fix"   ',
 			"Claude Sonnet 4",
