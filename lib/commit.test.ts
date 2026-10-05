@@ -104,8 +104,8 @@ describe("shell argument handling", () => {
 describe("commit command prefixes", () => {
 	it.each([
 		'git -c core.hooksPath=/dev/null commit -m "example"',
-		'SKIP=tf-fmt git commit -m "example"',
-		'SKIP=tf-fmt NOTE="two words" git -c core.hooksPath=/dev/null -C "repo path" commit -m "example"',
+		'EXAMPLE_VAR=demo git commit -m "example"',
+		'EXAMPLE_VAR=demo NOTE="two words" git -c core.hooksPath=/dev/null -C "repo path" commit -m "example"',
 		'git -C "repo path" commit -m "example"',
 		"git -C 'repo path' commit -m example",
 		'git -C repo\\ path commit -m "example"',
@@ -119,7 +119,7 @@ describe("commit command prefixes", () => {
 
 	it("keeps prefixed commits separate from surrounding commands", () => {
 		const prefix = 'git add file && ';
-		const commit = 'SKIP=tf-fmt git -c core.hooksPath=/dev/null commit -m "example"';
+		const commit = 'EXAMPLE_VAR=demo git -c core.hooksPath=/dev/null commit -m "example"';
 		const tail = ' && git push && gh pr create --title "example"';
 		expect(appendTrailers(prefix + commit + tail, "Model", "1.0.0")).toBe(
 			prefix + commit + trailerFlags + tail,
@@ -135,17 +135,17 @@ describe("commit command prefixes", () => {
 		'git --unknown commit -m "example"',
 		'git --unknown commit commit -m "example"',
 		'git --version commit -m "example"',
-		'env SKIP=tf-fmt git commit -m "example"',
-		'echo SKIP=tf-fmt git commit -m "example"',
-		'"SKIP=tf-fmt" git commit -m "example"',
-		'SKIP\\=tf-fmt git commit -m "example"',
-		'1SKIP=tf-fmt git commit -m "example"',
-		'SKIP=$(echo tf-fmt) git commit -m "example"',
+		'env EXAMPLE_VAR=demo git commit -m "example"',
+		'echo EXAMPLE_VAR=demo git commit -m "example"',
+		'"EXAMPLE_VAR=demo" git commit -m "example"',
+		'EXAMPLE_VAR\\=demo git commit -m "example"',
+		'1EXAMPLE_VAR=demo git commit -m "example"',
+		'EXAMPLE_VAR=$(echo demo) git commit -m "example"',
 		'git -C "$(pwd)" commit -m "example"',
 		'git -C "unterminated commit -m example',
-		'(SKIP=tf-fmt git commit -m "example")',
-		'if true; then SKIP=tf-fmt git commit -m "example"; fi',
-		'cat <<EOF\nSKIP=tf-fmt git commit -m "example"\nEOF',
+		'(EXAMPLE_VAR=demo git commit -m "example")',
+		'if true; then EXAMPLE_VAR=demo git commit -m "example"; fi',
+		'cat <<EOF\nEXAMPLE_VAR=demo git commit -m "example"\nEOF',
 	])("leaves unsupported or unrelated commands unchanged: %s", (command) => {
 		expect(isGitCommit(command)).toBe(false);
 		expect(appendTrailers(command, "Model", "1.0.0")).toBe(command);
@@ -154,7 +154,7 @@ describe("commit command prefixes", () => {
 
 describe.each([
 	'git',
-	'SKIP=tf-fmt NOTE="two words" git -C "." -c core.hooksPath=/dev/null',
+	'EXAMPLE_VAR=demo NOTE="two words" git -C "." -c core.hooksPath=/dev/null',
 ])("shell execution: %s", (prefix) => {
 	it.each(["Model", "Model's \\n $(printf injected)"])("attributes the commit without changing push or PR arguments (%s)", (model) => {
 		const cwd = mkdtempSync(join(tmpdir(), "pi-co-authored-by-"));
