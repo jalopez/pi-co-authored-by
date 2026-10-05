@@ -101,7 +101,61 @@ describe("shell argument handling", () => {
 	});
 });
 
-describe("shell execution", () => {
+describe("commit command prefixes", () => {
+	it.each([
+		'git -c core.hooksPath=/dev/null commit -m "example"',
+		'EXAMPLE_VAR=demo git commit -m "example"',
+		'EXAMPLE_VAR=demo NOTE="two words" git -c core.hooksPath=/dev/null -C "repo path" commit -m "example"',
+		'git -C "repo path" commit -m "example"',
+		"git -C 'repo path' commit -m example",
+		'git -C repo\\ path commit -m "example"',
+		'git -C"repo path" -ccore.hooksPath=/dev/null commit -m "example"',
+		'git -C commit -c alias.example=commit commit -m "example"',
+		'EMPTY= _NOTE=ok git -C . -C . -c "core.hooksPath=/dev/null" commit -m "example"',
+	])("recognizes and rewrites %s", (command) => {
+		expect(isGitCommit(command)).toBe(true);
+		expect(appendTrailers(command, "Model", "1.0.0")).toBe(command + trailerFlags);
+	});
+
+	it("keeps prefixed commits separate from surrounding commands", () => {
+		const prefix = 'git add file && ';
+		const commit = 'EXAMPLE_VAR=demo git -c core.hooksPath=/dev/null commit -m "example"';
+		const tail = ' && git push && gh pr create --title "example"';
+		expect(appendTrailers(prefix + commit + tail, "Model", "1.0.0")).toBe(
+			prefix + commit + trailerFlags + tail,
+		);
+	});
+
+	it.each([
+		'git -c',
+		'git -C',
+		'git -c commit -m "example"',
+		'git -C commit -m "example"',
+		'git -c alias.example=commit status -m "example"',
+		'git --unknown commit -m "example"',
+		'git --unknown commit commit -m "example"',
+		'git --version commit -m "example"',
+		'env EXAMPLE_VAR=demo git commit -m "example"',
+		'echo EXAMPLE_VAR=demo git commit -m "example"',
+		'"EXAMPLE_VAR=demo" git commit -m "example"',
+		'EXAMPLE_VAR\\=demo git commit -m "example"',
+		'1EXAMPLE_VAR=demo git commit -m "example"',
+		'EXAMPLE_VAR=$(echo demo) git commit -m "example"',
+		'git -C "$(pwd)" commit -m "example"',
+		'git -C "unterminated commit -m example',
+		'(EXAMPLE_VAR=demo git commit -m "example")',
+		'if true; then EXAMPLE_VAR=demo git commit -m "example"; fi',
+		'cat <<EOF\nEXAMPLE_VAR=demo git commit -m "example"\nEOF',
+	])("leaves unsupported or unrelated commands unchanged: %s", (command) => {
+		expect(isGitCommit(command)).toBe(false);
+		expect(appendTrailers(command, "Model", "1.0.0")).toBe(command);
+	});
+});
+
+describe.each([
+	'git',
+	'EXAMPLE_VAR=demo NOTE="two words" git -C "." -c core.hooksPath=/dev/null',
+])("shell execution: %s", (prefix) => {
 	it.each(["Model", "Model's \\n $(printf injected)"])("attributes the commit without changing push or PR arguments (%s)", (model) => {
 		const cwd = mkdtempSync(join(tmpdir(), "pi-co-authored-by-"));
 		const options = {
@@ -120,7 +174,7 @@ describe("shell execution", () => {
 		try {
 			execFileSync("git", ["init", "--quiet"], options);
 			const command = appendTrailers(
-				'git commit --allow-empty -qm "fix" && git push origin main && gh pr create --title "fix" --body "details"',
+				`${prefix} commit --allow-empty -qm "fix" && git push origin main && gh pr create --title "fix" --body "details"`,
 				model,
 				"1.0.0",
 			);

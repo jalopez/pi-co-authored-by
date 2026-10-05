@@ -50,7 +50,9 @@ The extension hooks into Pi's `tool_call` event. When it detects a `git commit -
 
 In compound commands such as `git commit -m "fix" && git push`, trailers are added to each matching commit, not to the final command. Detection respects quotes, escapes, comments, redirections, and command separators (`&&`, `||`, `;`, newlines, pipes, and background operators). `--message` is also supported.
 
-Detection requires a literal `git commit` invocation. Commands with wrappers or Git global options are not matched. Shell input containing substitutions, heredocs, grouping, control flow, or incomplete quoting is left unchanged to avoid unsafe rewrites.
+Detection requires literal `git` and `commit` command words. Leading shell assignments such as `EXAMPLE_VAR=demo git commit -m "fix"` are supported, as are Git global options `-c` and `-C` with separate or attached values. For example, `git -c core.hooksPath=/dev/null -C "repo path" commit -m "fix"` receives trailers. Multiple assignments and repeated supported options can be combined.
+
+Wrappers such as `env` or `sudo`, and other Git global options, are not matched. Option values are consumed before looking for the `commit` subcommand. Shell input containing command substitutions, heredocs, grouping, control flow, or incomplete quoting is left unchanged to avoid unsafe rewrites.
 
 | What | Value |
 |------|-------|

@@ -66,6 +66,25 @@ const valueOptions = new Set([
 	"--inter-hunk-context",
 ]);
 
+function commitIndex(words: Token[]): number {
+	let i = 0;
+	while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]?.text ?? "")) i++;
+	if (words[i++]?.text !== "git") return -1;
+	while (i < words.length) {
+		const text = words[i].text;
+		if (text === "commit") return i;
+		if (text === "-c" || text === "-C") {
+			if (!words[i + 1]) return -1;
+			i += 2;
+		} else if (/^-[cC].+/.test(text)) {
+			i++;
+		} else {
+			return -1;
+		}
+	}
+	return -1;
+}
+
 function commitInsertions(cmd: string): number[] {
 	const tokens = tokenize(cmd);
 	if (!tokens) return [];
@@ -74,10 +93,11 @@ function commitInsertions(cmd: string): number[] {
 	let unsupported = false;
 	const finishCommand = () => {
 		if (/^(?:for|select|case|if|then|elif|else|fi|while|until|do|done|in|esac|function|\[\[|\]\])$/.test(words[0]?.text ?? "")) unsupported = true;
-		if (words[0]?.text === "git" && words[1]?.text === "commit") {
+		const index = commitIndex(words);
+		if (index >= 0) {
 			let hasMessage = false;
-			let end = words[1].end;
-			for (let i = 2; i < words.length; i++) {
+			let end = words[index].end;
+			for (let i = index + 1; i < words.length; i++) {
 				const word = words[i];
 				if (word.text === "--") break;
 				end = word.end;
